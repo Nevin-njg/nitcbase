@@ -47,3 +47,45 @@ void RelCacheTable::recordToRelCatEntry(
     relCatEntry->numSlotsPerBlk =
         (int)record[RELCAT_NO_SLOTS_PER_BLOCK_INDEX].nVal;
 }
+
+
+int RelCacheTable::getSearchIndex(int relId, RecId *searchIndex)
+{
+    // check whether relId is valid
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
+
+    // relation is not open
+    if (relCache[relId] == nullptr)
+        return E_RELNOTOPEN;
+
+    // copy searchIndex from relation cache
+    *searchIndex = relCache[relId]->searchIndex;
+
+    return SUCCESS;
+}
+
+
+int RelCacheTable::setSearchIndex(int relId, RecId *searchIndex)
+{
+    // check whether relId is valid
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
+
+    // relation is not open
+    if (relCache[relId] == nullptr)
+        return E_RELNOTOPEN;
+
+    // update searchIndex in relation cache
+    relCache[relId]->searchIndex = *searchIndex;
+
+    return SUCCESS;
+}
+
+
+int RelCacheTable::resetSearchIndex(int relId)
+{
+    RecId searchIndex = {-1, -1};
+
+    return setSearchIndex(relId, &searchIndex);
+}

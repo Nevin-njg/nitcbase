@@ -37,6 +37,41 @@ int BlockBuffer::getHeader(struct HeadInfo *head) {
     return SUCCESS;
 }
 
+int RecBuffer::getSlotMap(unsigned char *slotMap)
+{
+    struct HeadInfo head;
+
+    // First get the block header
+    int status = this->getHeader(&head);
+
+    if (status != SUCCESS)
+    {
+        return status;
+    }
+
+    // Get pointer to the block inside StaticBuffer
+    unsigned char *bufferPtr;
+
+    status = loadBlockAndGetBufferPtr(&bufferPtr);
+
+    if (status != SUCCESS)
+    {
+        return status;
+    }
+
+    // Slot map starts immediately after the 32-byte block header
+    unsigned char *slotMapInBuffer =
+        bufferPtr + HEADER_SIZE;
+
+    // Copy all slot-map entries
+    memcpy(
+        slotMap,
+        slotMapInBuffer,
+        head.numSlots
+    );
+
+    return SUCCESS;
+}
 
 
 
@@ -142,5 +177,34 @@ int BlockBuffer::loadBlockAndGetBufferPtr(unsigned char **buffPtr)
     *buffPtr = StaticBuffer::blocks[bufferNum];
 
     return SUCCESS;
+}
+
+
+
+int compareAttrs(Attribute attr1, Attribute attr2, int attrType)
+{
+    double diff;
+
+    if (attrType == STRING)
+    {
+        diff = strcmp(attr1.sVal, attr2.sVal);
+    }
+    else
+    {
+        diff = attr1.nVal - attr2.nVal;
+    }
+
+    if (diff > 0)
+    {
+        return 1;
+    }
+    else if (diff < 0)
+    {
+        return -1;
+    }
+    else
+    {
+        return 0;
+    }
 }
 

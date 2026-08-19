@@ -2,6 +2,7 @@
 #include <cstring>
 #include <cstdlib>
 
+const int STUDENTS_RELID = 2;
 
 OpenRelTable::OpenRelTable()
 {
@@ -72,6 +73,9 @@ OpenRelTable::OpenRelTable()
     relCacheEntry.recId.block = RELCAT_BLOCK;
     relCacheEntry.recId.slot = RELCAT_SLOTNUM_FOR_RELCAT;
 
+    relCacheEntry.dirty = false;
+    relCacheEntry.searchIndex = {-1, -1};
+
 
     /*
      * Allocate permanent memory for the RELATIONCAT cache entry.
@@ -112,6 +116,9 @@ OpenRelTable::OpenRelTable()
     attrCatRelCacheEntry.recId.block = RELCAT_BLOCK;
     attrCatRelCacheEntry.recId.slot = RELCAT_SLOTNUM_FOR_ATTRCAT;
 
+    attrCatRelCacheEntry.dirty = false;
+    attrCatRelCacheEntry.searchIndex = {-1, -1};
+
     // Store ATTRIBUTECAT in relation cache position 1.
     RelCacheTable::relCache[ATTRCAT_RELID] =
         (struct RelCacheEntry *)malloc(sizeof(RelCacheEntry));
@@ -143,8 +150,11 @@ OpenRelTable::OpenRelTable()
 
         newEntry->recId.block = ATTRCAT_BLOCK;
         newEntry->recId.slot = i;
-        newEntry->next = nullptr;
 
+        newEntry->dirty = false;
+        newEntry->searchIndex = {-1, -1};
+
+        newEntry->next = nullptr;
         if (head == nullptr)
         {
             head = newEntry;
@@ -181,6 +191,10 @@ OpenRelTable::OpenRelTable()
 
         newEntry->recId.block = ATTRCAT_BLOCK;
         newEntry->recId.slot = slotNum;
+
+        newEntry->dirty = false;
+        newEntry->searchIndex = {-1, -1};
+
         newEntry->next = nullptr;
 
         if (attrCatHead == nullptr)
@@ -199,7 +213,7 @@ OpenRelTable::OpenRelTable()
     AttrCacheTable::attrCache[ATTRCAT_RELID] = attrCatHead;
 
     // stage 3 modification
-    const int STUDENTS_RELID = 2;
+    
 
     HeadInfo relCatHeader;
     relCatBlock.getHeader(&relCatHeader);
@@ -269,8 +283,12 @@ OpenRelTable::OpenRelTable()
 
                 newEntry->recId.block = attrBlockNum;
                 newEntry->recId.slot = i;
-                newEntry->next = nullptr;
 
+                newEntry->dirty = false;
+                newEntry->searchIndex = {-1, -1};
+
+                newEntry->next = nullptr;
+                
                 if (studentHead == nullptr)
                     studentHead = newEntry;
                 else
@@ -310,4 +328,25 @@ OpenRelTable::~OpenRelTable()
             RelCacheTable::relCache[relId] = nullptr;
         }
     }
+}
+
+
+int OpenRelTable::getRelId(char relName[ATTR_SIZE])
+{
+    if (strcmp(relName, RELCAT_RELNAME) == 0)
+    {
+        return RELCAT_RELID;
+    }
+
+    if (strcmp(relName, ATTRCAT_RELNAME) == 0)
+    {
+        return ATTRCAT_RELID;
+    }
+
+    if (strcmp(relName, "Students") == 0)
+    {
+        return STUDENTS_RELID;
+    }
+
+    return E_RELNOTOPEN;
 }
