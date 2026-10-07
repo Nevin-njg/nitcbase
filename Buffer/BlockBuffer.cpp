@@ -7,6 +7,23 @@ BlockBuffer::BlockBuffer(int blockNum) {
     this->blockNum = blockNum;
 }
 
+BlockBuffer::BlockBuffer(char blockType)
+{
+    if (blockType == 'R') {
+        this->blockNum = getFreeBlock(REC);
+    }
+    else if (blockType == 'I') {
+        this->blockNum = getFreeBlock(IND_INTERNAL);
+    }
+    else if (blockType == 'L') {
+        this->blockNum = getFreeBlock(IND_LEAF);
+    }
+}
+
+RecBuffer::RecBuffer()
+    : BlockBuffer('R') {
+}
+
 RecBuffer::RecBuffer(int blockNum)
     : BlockBuffer(blockNum) {
 }
@@ -236,3 +253,161 @@ int compareAttrs(Attribute attr1, Attribute attr2, int attrType)
     }
 }
 
+int BlockBuffer::setHeader(struct HeadInfo *head)
+{
+    unsigned char *bufferPtr;
+
+    int status = loadBlockAndGetBufferPtr(&bufferPtr);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    struct HeadInfo *bufferHeader =
+        (struct HeadInfo *)bufferPtr;
+
+    bufferHeader->blockType  = head->blockType;
+    bufferHeader->pblock     = head->pblock;
+    bufferHeader->lblock     = head->lblock;
+    bufferHeader->rblock     = head->rblock;
+    bufferHeader->numEntries = head->numEntries;
+    bufferHeader->numAttrs   = head->numAttrs;
+    bufferHeader->numSlots   = head->numSlots;
+
+    status = StaticBuffer::setDirtyBit(this->blockNum);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    return SUCCESS;
+}
+
+int BlockBuffer::setBlockType(int blockType)
+{
+    unsigned char *bufferPtr;
+
+    // Make sure this block is present in the buffer
+    int status = loadBlockAndGetBufferPtr(&bufferPtr);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    // First 4 bytes of every block contain blockType
+    *((int32_t *)bufferPtr) = blockType;
+
+    // Update the in-memory block allocation map also
+    StaticBuffer::blockAllocMap[this->blockNum] = blockType;
+
+    // We modified the buffer, so mark it dirty
+    status = StaticBuffer::setDirtyBit(this->blockNum);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    return SUCCESS;
+}
+
+int BlockBuffer::getFreeBlock(int blockType)
+{
+    int freeBlock = -1;
+
+    // Find an unused disk block.
+    for (int i = 0; i < DISK_BLOCKS; i++) {
+        if (StaticBuffer::blockAllocMap[i] == UNUSED_BLK) {
+            freeBlock = i;
+            break;
+        }
+    }
+
+    // No free block exists.
+    if (freeBlock == -1) {
+        return E_DISKFULL;
+    }
+
+    // This BlockBuffer object now represents the new block.
+    this->blockNum = freeBlock;
+
+    // Allocate a RAM buffer for the new block.
+    int bufferNum = StaticBuffer::getFreeBuffer(this->blockNum);
+
+    if (bufferNum < 0) {
+        return bufferNum;
+    }
+
+    // Initialise the header of the new block.
+    struct HeadInfo head;
+
+    head.blockType  = blockType;
+    head.pblock     = -1;
+    head.lblock     = -1;
+    head.rblock     = -1;
+    head.numEntries = 0;
+    head.numAttrs   = 0;
+    head.numSlots   = 0;
+
+    int status = this->setHeader(&head);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    // Update both block header type and block allocation map.
+    status = this->setBlockType(blockType);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    return this->blockNum;
+}
+
+int BlockBuffer::getBlockNum()
+{
+    return this->blockNum;
+}
+
+int RecBuffer::setSlotMap(unsigned char *slotMap)
+{
+    unsigned char *bufferPtr;
+
+    // Make sure the block is loaded in memory
+    int status = loadBlockAndGetBufferPtr(&bufferPtr);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    // Get block information
+    struct HeadInfo head;
+
+    status = this->getHeader(&head);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    int numSlots = head.numSlots;
+
+    // Slot map starts immediately after the block header
+    unsigned char *slotMapInBuffer =
+        bufferPtr + HEADER_SIZE;
+
+    // Replace existing slot map
+    memcpy(
+        slotMapInBuffer,
+        slotMap,
+        numSlots
+    );
+
+    // Buffer has been modified
+    status = StaticBuffer::setDirtyBit(this->blockNum);
+
+    if (status != SUCCESS) {
+        return status;
+    }
+
+    return SUCCESS;
+}

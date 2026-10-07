@@ -369,3 +369,283 @@ int BlockAccess::renameAttribute(
 
     return SUCCESS;
 }
+
+
+int BlockAccess::insert(int relId, union Attribute *record)
+{
+    // --------------------------------------------------
+    // 1. Get relation metadata from Relation Cache
+    // --------------------------------------------------
+    RelCatEntry relCatEntry;
+
+    int ret = RelCacheTable::getRelCatEntry(
+        relId,
+        &relCatEntry
+    );
+
+    if (ret != SUCCESS)
+    {
+        return ret;
+    }
+
+    int blockNum = relCatEntry.firstBlk;
+    int numOfSlots = relCatEntry.numSlotsPerBlk;
+    int numOfAttributes = relCatEntry.numAttrs;
+
+    RecId recId = {-1, -1};
+
+    // Last block visited while traversing the linked list
+    int prevBlockNum = -1;
+
+
+    // --------------------------------------------------
+    // 2. Search ALL existing blocks for a free slot
+    // --------------------------------------------------
+    while (blockNum != -1)
+    {
+        RecBuffer block(blockNum);
+
+        HeadInfo head;
+
+        ret = block.getHeader(&head);
+
+        if (ret != SUCCESS)
+        {
+            return ret;
+        }
+
+
+        unsigned char slotMap[head.numSlots];
+
+        ret = block.getSlotMap(slotMap);
+
+        if (ret != SUCCESS)
+        {
+            return ret;
+        }
+
+
+        // Search this block for an empty slot
+        for (int slot = 0; slot < head.numSlots; slot++)
+        {
+            if (slotMap[slot] == SLOT_UNOCCUPIED)
+            {
+                recId.block = blockNum;
+                recId.slot = slot;
+                break;
+            }
+        }
+
+
+        // Free slot found
+        if (recId.block != -1)
+        {
+            break;
+        }
+
+
+        // Move to next record block
+        prevBlockNum = blockNum;
+        blockNum = head.rblock;
+    }
+
+
+    // --------------------------------------------------
+    // 3. No existing block has a free slot
+    // --------------------------------------------------
+    if (recId.block == -1)
+    {
+        // RELATIONCAT is not allowed to grow beyond its
+        // allocated catalogue block(s)
+        if (relId == RELCAT_RELID)
+        {
+            return E_MAXRELATIONS;
+        }
+
+
+        // Allocate a new record block
+        RecBuffer newBlock;
+
+        int newBlockNum = newBlock.getBlockNum();
+
+        if (newBlockNum == E_DISKFULL)
+        {
+            return E_DISKFULL;
+        }
+
+
+        recId.block = newBlockNum;
+        recId.slot = 0;
+
+
+        // --------------------------------------------------
+        // 4. Initialise new block header
+        // --------------------------------------------------
+        HeadInfo newHead;
+
+        newHead.blockType = REC;
+
+        // For record blocks, previous block is lblock
+        newHead.pblock = -1;
+        newHead.lblock = prevBlockNum;
+        newHead.rblock = -1;
+
+        newHead.numEntries = 0;
+        newHead.numAttrs = numOfAttributes;
+        newHead.numSlots = numOfSlots;
+
+
+        ret = newBlock.setHeader(&newHead);
+
+        if (ret != SUCCESS)
+        {
+            return ret;
+        }
+
+
+        // --------------------------------------------------
+        // 5. Initialise new block slot map
+        // --------------------------------------------------
+        unsigned char newSlotMap[numOfSlots];
+
+        for (int i = 0; i < numOfSlots; i++)
+        {
+            newSlotMap[i] = SLOT_UNOCCUPIED;
+        }
+
+
+        ret = newBlock.setSlotMap(newSlotMap);
+
+        if (ret != SUCCESS)
+        {
+            return ret;
+        }
+
+
+        // --------------------------------------------------
+        // 6. Link previous last block -> new block
+        // --------------------------------------------------
+        if (prevBlockNum != -1)
+        {
+            RecBuffer prevBlock(prevBlockNum);
+
+            HeadInfo prevHead;
+
+            ret = prevBlock.getHeader(&prevHead);
+
+            if (ret != SUCCESS)
+            {
+                return ret;
+            }
+
+            prevHead.rblock = newBlockNum;
+
+            ret = prevBlock.setHeader(&prevHead);
+
+            if (ret != SUCCESS)
+            {
+                return ret;
+            }
+        }
+        else
+        {
+            // This is the FIRST record block of the relation
+            relCatEntry.firstBlk = newBlockNum;
+        }
+
+
+        // This new block is now the last block
+        relCatEntry.lastBlk = newBlockNum;
+
+        ret = RelCacheTable::setRelCatEntry(
+            relId,
+            &relCatEntry
+        );
+
+        if (ret != SUCCESS)
+        {
+            return ret;
+        }
+    }
+
+
+    // --------------------------------------------------
+    // 7. Insert the actual record
+    // --------------------------------------------------
+    RecBuffer targetBlock(recId.block);
+
+    ret = targetBlock.setRecord(
+        record,
+        recId.slot
+    );
+
+    if (ret != SUCCESS)
+    {
+        return ret;
+    }
+
+
+    // --------------------------------------------------
+    // 8. Mark inserted slot as occupied
+    // --------------------------------------------------
+    HeadInfo targetHead;
+
+    ret = targetBlock.getHeader(&targetHead);
+
+    if (ret != SUCCESS)
+    {
+        return ret;
+    }
+
+
+    unsigned char targetSlotMap[targetHead.numSlots];
+
+    ret = targetBlock.getSlotMap(targetSlotMap);
+
+    if (ret != SUCCESS)
+    {
+        return ret;
+    }
+
+
+    targetSlotMap[recId.slot] = SLOT_OCCUPIED;
+
+    ret = targetBlock.setSlotMap(targetSlotMap);
+
+    if (ret != SUCCESS)
+    {
+        return ret;
+    }
+
+
+    // --------------------------------------------------
+    // 9. Increment number of entries in this block
+    // --------------------------------------------------
+    targetHead.numEntries++;
+
+    ret = targetBlock.setHeader(&targetHead);
+
+    if (ret != SUCCESS)
+    {
+        return ret;
+    }
+
+
+    // --------------------------------------------------
+    // 10. Increment total number of relation records
+    // --------------------------------------------------
+    relCatEntry.numRecs++;
+
+    ret = RelCacheTable::setRelCatEntry(
+        relId,
+        &relCatEntry
+    );
+
+    if (ret != SUCCESS)
+    {
+        return ret;
+    }
+
+
+    return SUCCESS;
+}

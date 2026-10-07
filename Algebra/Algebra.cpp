@@ -158,3 +158,107 @@ int Algebra::select(
 
     return SUCCESS;
 }
+
+
+int Algebra::insert(
+    char relName[ATTR_SIZE],
+    int nAttrs,
+    char record[][ATTR_SIZE]) {
+
+  // --------------------------------------------------
+  // 1. Cannot insert into catalog relations
+  // --------------------------------------------------
+  if (strcmp(relName, RELCAT_RELNAME) == 0 ||
+      strcmp(relName, ATTRCAT_RELNAME) == 0) {
+
+    return E_NOTPERMITTED;
+  }
+
+
+  // --------------------------------------------------
+  // 2. Get relation ID
+  // --------------------------------------------------
+  int relId = OpenRelTable::getRelId(relName);
+
+  if (relId == E_RELNOTOPEN) {
+    return E_RELNOTOPEN;
+  }
+
+
+  // --------------------------------------------------
+  // 3. Get relation catalog entry
+  // --------------------------------------------------
+  RelCatEntry relCatEntry;
+
+  int status =
+      RelCacheTable::getRelCatEntry(relId, &relCatEntry);
+
+  if (status != SUCCESS) {
+    return status;
+  }
+
+
+  // --------------------------------------------------
+  // 4. Check number of attributes
+  // --------------------------------------------------
+  if (relCatEntry.numAttrs != nAttrs) {
+    return E_NATTRMISMATCH;
+  }
+
+
+  // --------------------------------------------------
+  // 5. Convert input strings to Attribute[]
+  // --------------------------------------------------
+  Attribute recordValues[nAttrs];
+
+  for (int i = 0; i < nAttrs; i++) {
+
+    AttrCatEntry attrCatEntry;
+
+    status =
+        AttrCacheTable::getAttrCatEntry(
+            relId,
+            i,
+            &attrCatEntry
+        );
+
+    if (status != SUCCESS) {
+      return status;
+    }
+
+
+    // ----------------------------------------------
+    // NUMBER attribute
+    // ----------------------------------------------
+    if (attrCatEntry.attrType == NUMBER) {
+
+      if (!isNumber(record[i])) {
+        return E_ATTRTYPEMISMATCH;
+      }
+
+      recordValues[i].nVal =
+          atof(record[i]);
+    }
+
+
+    // ----------------------------------------------
+    // STRING attribute
+    // ----------------------------------------------
+    else if (attrCatEntry.attrType == STRING) {
+
+      strcpy(
+          recordValues[i].sVal,
+          record[i]
+      );
+    }
+  }
+
+
+  // --------------------------------------------------
+  // 6. Pass converted record to Block Access Layer
+  // --------------------------------------------------
+  return BlockAccess::insert(
+      relId,
+      recordValues
+  );
+}

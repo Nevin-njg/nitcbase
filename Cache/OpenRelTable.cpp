@@ -522,6 +522,7 @@ int OpenRelTable::openRel(char relName[ATTR_SIZE]) {
   return relId;
 }
 
+
 int OpenRelTable::closeRel(int relId) {
 
   // RELATIONCAT and ATTRIBUTECAT cannot be closed normally
@@ -541,7 +542,38 @@ int OpenRelTable::closeRel(int relId) {
 
 
   // --------------------------------------------------
-  // 1. Free Relation Cache entry
+  // 1. Write back Relation Cache entry if it is dirty
+  // --------------------------------------------------
+  if (RelCacheTable::relCache[relId] != nullptr &&
+      RelCacheTable::relCache[relId]->dirty) {
+
+    // Convert RelCatEntry -> Attribute record[]
+    Attribute record[RELCAT_NO_ATTRS];
+
+    RelCacheTable::relCatEntryToRecord(
+        &(RelCacheTable::relCache[relId]->relCatEntry),
+        record
+    );
+
+    // Location of this relation's entry in RELATIONCAT
+    RecId recId =
+        RelCacheTable::relCache[relId]->recId;
+
+    // Open the corresponding RELATIONCAT block
+    RecBuffer relCatBlock(recId.block);
+
+    // Write updated relation metadata back to the block
+    int status =
+        relCatBlock.setRecord(record, recId.slot);
+
+    if (status != SUCCESS) {
+      return status;
+    }
+  }
+
+
+  // --------------------------------------------------
+  // 2. Free Relation Cache entry
   // --------------------------------------------------
   free(RelCacheTable::relCache[relId]);
 
@@ -549,7 +581,7 @@ int OpenRelTable::closeRel(int relId) {
 
 
   // --------------------------------------------------
-  // 2. Free Attribute Cache linked list
+  // 3. Free Attribute Cache linked list
   // --------------------------------------------------
   AttrCacheEntry *current =
       AttrCacheTable::attrCache[relId];
@@ -568,7 +600,7 @@ int OpenRelTable::closeRel(int relId) {
 
 
   // --------------------------------------------------
-  // 3. Mark OpenRelTable slot as free
+  // 4. Mark OpenRelTable slot as free
   // --------------------------------------------------
   tableMetaInfo[relId].free = true;
 
@@ -580,6 +612,17 @@ int OpenRelTable::closeRel(int relId) {
 
 OpenRelTable::~OpenRelTable()
 {
+    // Flush relation-cache updates for user relations that were still open
+    // when the database session ends.  RELATIONCAT and ATTRIBUTECAT remain
+    // open for the lifetime of the session and are released below.
+    for (int relId = 2; relId < MAX_OPEN; relId++)
+    {
+        if (!tableMetaInfo[relId].free)
+        {
+            closeRel(relId);
+        }
+    }
+
     for (int relId = 0; relId < MAX_OPEN; relId++)
     {
         // Free the linked list of attribute-cache entries.
