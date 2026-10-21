@@ -1,4 +1,5 @@
 #include "BlockAccess.h"
+#include <vector>
 #include <cstring>
 
 
@@ -920,4 +921,90 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
         return ret;
 
     return SUCCESS;
+}
+
+
+int BlockAccess::project(int relId, Attribute *record) {
+
+    // STEP 1: Get previous search index
+    RecId prevRecId;
+
+    int ret = RelCacheTable::getSearchIndex(
+        relId, &prevRecId
+    );
+
+    if (ret != SUCCESS)
+        return ret;
+
+    int block, slot;
+
+    // STEP 2: Determine starting position
+    if (prevRecId.block == -1 && prevRecId.slot == -1) {
+
+        RelCatEntry relCatEntry;
+
+        ret = RelCacheTable::getRelCatEntry(
+            relId, &relCatEntry
+        );
+
+        if (ret != SUCCESS)
+            return ret;
+
+        block = relCatEntry.firstBlk;
+        slot = 0;
+
+    } else {
+
+        block = prevRecId.block;
+        slot = prevRecId.slot + 1;
+    }
+
+    // STEP 3: Find next occupied slot
+    while (block != -1) {
+
+        RecBuffer recBlock(block);
+
+        HeadInfo header;
+
+        ret = recBlock.getHeader(&header);
+
+        if (ret != SUCCESS)
+            return ret;
+
+        // Move to next block if current block is exhausted
+        if (slot >= header.numSlots) {
+            block = header.rblock;
+            slot = 0;
+            continue;
+        }
+
+        unsigned char slotMap[BLOCK_SIZE];
+
+        ret = recBlock.getSlotMap(slotMap);
+
+        if (ret != SUCCESS)
+            return ret;
+
+        // Skip unoccupied slots
+        if (slotMap[slot] == SLOT_UNOCCUPIED) {
+            slot++;
+            continue;
+        }
+
+        // STEP 4: Copy the record
+        ret = recBlock.getRecord(record, slot);
+
+        if (ret != SUCCESS)
+            return ret;
+
+        // STEP 5: Update search index
+        RecId nextRecId = {block, slot};
+
+        return RelCacheTable::setSearchIndex(
+            relId, &nextRecId
+        );
+    }
+
+    // No more records
+    return E_NOTFOUND;
 }

@@ -16,7 +16,6 @@ static bool isNumber(char *str)
     return ret == 1 && len == strlen(str);
 }
 
-
 int Algebra::select(
     char srcRel[ATTR_SIZE],
     char targetRel[ATTR_SIZE],
@@ -24,16 +23,14 @@ int Algebra::select(
     int op,
     char strVal[ATTR_SIZE])
 {
-    // 1. Find relId of source relation
+    // 1. Find source relation
     int srcRelId = OpenRelTable::getRelId(srcRel);
 
     if (srcRelId == E_RELNOTOPEN)
-    {
         return E_RELNOTOPEN;
-    }
 
 
-    // 2. Get metadata of the attribute used in WHERE
+    // 2. Get attribute metadata for WHERE condition
     AttrCatEntry attrCatEntry;
 
     int ret = AttrCacheTable::getAttrCatEntry(
@@ -43,13 +40,11 @@ int Algebra::select(
     );
 
     if (ret != SUCCESS)
-    {
         return ret;
-    }
 
 
-    // 3. Convert strVal into proper Attribute type
-    Attribute attrVal;
+    // 3. Convert condition value to correct type
+    Attribute attrVal{};
 
     if (attrCatEntry.attrType == NUMBER)
     {
@@ -68,95 +63,121 @@ int Algebra::select(
     }
 
 
-    // 4. Start search from beginning
-    RelCacheTable::resetSearchIndex(srcRelId);
-
-
-    // 5. Get relation metadata
+    // 4. Get source relation metadata
     RelCatEntry relCatEntry;
 
-    RelCacheTable::getRelCatEntry(
+    ret = RelCacheTable::getRelCatEntry(
         srcRelId,
         &relCatEntry
     );
 
+    if (ret != SUCCESS)
+        return ret;
 
-    // 6. Print column names
-    printf("|");
+    int nAttrs = relCatEntry.numAttrs;
 
-    for (int i = 0; i < relCatEntry.numAttrs; i++)
+
+    // 5. Get all source attribute names and types
+    char attrNames[nAttrs][ATTR_SIZE];
+    int attrTypes[nAttrs];
+
+    for (int i = 0; i < nAttrs; i++)
     {
         AttrCatEntry columnEntry;
 
-        AttrCacheTable::getAttrCatEntry(
+        ret = AttrCacheTable::getAttrCatEntry(
             srcRelId,
             i,
             &columnEntry
         );
 
-        printf(" %s |", columnEntry.attrName);
+        if (ret != SUCCESS)
+            return ret;
+
+        strcpy(attrNames[i], columnEntry.attrName);
+
+        attrTypes[i] = columnEntry.attrType;
     }
 
-    printf("\n");
+
+    // 6. Create target relation
+    ret = Schema::createRel(
+        targetRel,
+        nAttrs,
+        attrNames,
+        attrTypes
+    );
+
+    if (ret != SUCCESS)
+        return ret;
 
 
-    // 7. Repeatedly find matching records
+    // 7. Open target relation
+    int targetRelId = OpenRelTable::openRel(targetRel);
+
+    if (targetRelId < 0)
+    {
+        Schema::deleteRel(targetRel);
+        return targetRelId;
+    }
+
+
+    // 8. Reset source search index
+    ret = RelCacheTable::resetSearchIndex(srcRelId);
+
+    if (ret != SUCCESS)
+    {
+        if (Schema::closeRel(targetRel) == SUCCESS)
+            Schema::deleteRel(targetRel);
+
+        return ret;
+    }
+
+
+    // 9. Retrieve and insert matching records
+    Attribute record[nAttrs];
+
     while (true)
     {
-        RecId searchRes = BlockAccess::linearSearch(
+        ret = BlockAccess::search(
             srcRelId,
+            record,
             attr,
             attrVal,
             op
         );
 
-        // No more matches
-        if (searchRes.block == -1 &&
-            searchRes.slot == -1)
-        {
+        // No more matching records
+        if (ret == E_NOTFOUND)
             break;
+
+        // Handle search error
+        if (ret != SUCCESS)
+        {
+            if (Schema::closeRel(targetRel) == SUCCESS)
+                Schema::deleteRel(targetRel);
+
+            return ret;
         }
 
-
-        // 8. Read actual matching record from buffer
-        RecBuffer block(searchRes.block);
-
-        Attribute record[relCatEntry.numAttrs];
-
-        block.getRecord(
-            record,
-            searchRes.slot
+        // Insert matching record into target
+        ret = BlockAccess::insert(
+            targetRelId,
+            record
         );
 
-
-        // 9. Print the record
-        printf("|");
-
-        for (int i = 0; i < relCatEntry.numAttrs; i++)
+        if (ret != SUCCESS)
         {
-            AttrCatEntry columnEntry;
+            if (Schema::closeRel(targetRel) == SUCCESS)
+                Schema::deleteRel(targetRel);
 
-            AttrCacheTable::getAttrCatEntry(
-                srcRelId,
-                i,
-                &columnEntry
-            );
-
-            if (columnEntry.attrType == NUMBER)
-            {
-                printf(" %g |", record[i].nVal);
-            }
-            else
-            {
-                printf(" %s |", record[i].sVal);
-            }
+            return ret;
         }
-
-        printf("\n");
     }
 
 
-    return SUCCESS;
+    // 10. Close target relation
+    return Schema::closeRel(targetRel);
 }
 
 
@@ -261,4 +282,240 @@ int Algebra::insert(
       relId,
       recordValues
   );
+}
+
+int Algebra::project(
+    char srcRel[ATTR_SIZE],
+    char targetRel[ATTR_SIZE])
+{
+    // 1. Get source relation ID
+    int srcRelId = OpenRelTable::getRelId(srcRel);
+
+    if (srcRelId == E_RELNOTOPEN)
+        return E_RELNOTOPEN;
+
+
+    // 2. Get source relation metadata
+    RelCatEntry relCatEntry;
+
+    int ret = RelCacheTable::getRelCatEntry(
+        srcRelId, &relCatEntry
+    );
+
+    if (ret != SUCCESS)
+        return ret;
+
+    int nAttrs = relCatEntry.numAttrs;
+
+
+    // 3. Get attribute names and types
+    char attrNames[nAttrs][ATTR_SIZE];
+    int attrTypes[nAttrs];
+
+    for (int i = 0; i < nAttrs; i++)
+    {
+        AttrCatEntry attrCatEntry;
+
+        ret = AttrCacheTable::getAttrCatEntry(
+            srcRelId, i, &attrCatEntry
+        );
+
+        if (ret != SUCCESS)
+            return ret;
+
+        strcpy(attrNames[i], attrCatEntry.attrName);
+        attrTypes[i] = attrCatEntry.attrType;
+    }
+
+
+    // 4. Create target relation
+    ret = Schema::createRel(
+        targetRel, nAttrs, attrNames, attrTypes
+    );
+
+    if (ret != SUCCESS)
+        return ret;
+
+
+    // 5. Open target relation
+    int targetRelId = OpenRelTable::openRel(targetRel);
+
+    if (targetRelId < 0)
+    {
+        Schema::deleteRel(targetRel);
+        return targetRelId;
+    }
+
+
+    // 6. Reset source search index
+    ret = RelCacheTable::resetSearchIndex(srcRelId);
+
+    if (ret != SUCCESS)
+    {
+        if (Schema::closeRel(targetRel) == SUCCESS)
+            Schema::deleteRel(targetRel);
+
+        return ret;
+    }
+
+
+    // 7. Copy all records
+    Attribute record[nAttrs];
+
+    while (true)
+    {
+        ret = BlockAccess::project(srcRelId, record);
+
+        if (ret == E_NOTFOUND)
+            break;
+
+        if (ret != SUCCESS)
+        {
+            if (Schema::closeRel(targetRel) == SUCCESS)
+                Schema::deleteRel(targetRel);
+
+            return ret;
+        }
+
+        ret = BlockAccess::insert(
+            targetRelId, record
+        );
+
+        if (ret != SUCCESS)
+        {
+            if (Schema::closeRel(targetRel) == SUCCESS)
+                Schema::deleteRel(targetRel);
+
+            return ret;
+        }
+    }
+
+
+    // 8. Close target relation
+    return Schema::closeRel(targetRel);
+}
+
+
+
+int Algebra::project(
+    char srcRel[ATTR_SIZE],
+    char targetRel[ATTR_SIZE],
+    int tar_nAttrs,
+    char tar_Attrs[][ATTR_SIZE])
+{
+    // 1. Find source relation
+    int srcRelId = OpenRelTable::getRelId(srcRel);
+
+    if (srcRelId == E_RELNOTOPEN)
+        return E_RELNOTOPEN;
+
+    // 2. Get source relation metadata
+    RelCatEntry relCatEntry;
+
+    int ret = RelCacheTable::getRelCatEntry(
+        srcRelId, &relCatEntry
+    );
+
+    if (ret != SUCCESS)
+        return ret;
+
+    int src_nAttrs = relCatEntry.numAttrs;
+
+    if (tar_nAttrs <= 0)
+        return E_NATTRMISMATCH;
+
+    // 3. Store selected attribute offsets and types
+    int attrOffsets[tar_nAttrs];
+    int attrTypes[tar_nAttrs];
+
+    for (int i = 0; i < tar_nAttrs; i++)
+    {
+        AttrCatEntry attrCatEntry;
+
+        ret = AttrCacheTable::getAttrCatEntry(
+            srcRelId,
+            tar_Attrs[i],
+            &attrCatEntry
+        );
+
+        if (ret != SUCCESS)
+            return ret;
+
+        attrOffsets[i] = attrCatEntry.offset;
+        attrTypes[i] = attrCatEntry.attrType;
+    }
+
+    // 4. Create target relation
+    ret = Schema::createRel(
+        targetRel,
+        tar_nAttrs,
+        tar_Attrs,
+        attrTypes
+    );
+
+    if (ret != SUCCESS)
+        return ret;
+
+    // 5. Open target relation
+    int targetRelId = OpenRelTable::openRel(targetRel);
+
+    if (targetRelId < 0)
+    {
+        Schema::deleteRel(targetRel);
+        return targetRelId;
+    }
+
+    // 6. Reset source search index
+    ret = RelCacheTable::resetSearchIndex(srcRelId);
+
+    if (ret != SUCCESS)
+    {
+        if (Schema::closeRel(targetRel) == SUCCESS)
+            Schema::deleteRel(targetRel);
+
+        return ret;
+    }
+
+    Attribute record[src_nAttrs];
+    Attribute projectedRecord[tar_nAttrs];
+
+    // 7. Retrieve records one by one
+    while (true)
+    {
+        ret = BlockAccess::project(srcRelId, record);
+
+        if (ret == E_NOTFOUND)
+            break;
+
+        if (ret != SUCCESS)
+        {
+            if (Schema::closeRel(targetRel) == SUCCESS)
+                Schema::deleteRel(targetRel);
+
+            return ret;
+        }
+
+        // 8. Copy only selected attributes
+        for (int i = 0; i < tar_nAttrs; i++)
+        {
+            projectedRecord[i] = record[attrOffsets[i]];
+        }
+
+        // 9. Insert projected record
+        ret = BlockAccess::insert(
+            targetRelId,
+            projectedRecord
+        );
+
+        if (ret != SUCCESS)
+        {
+            if (Schema::closeRel(targetRel) == SUCCESS)
+                Schema::deleteRel(targetRel);
+
+            return ret;
+        }
+    }
+
+    // 10. Close target relation
+    return Schema::closeRel(targetRel);
 }
