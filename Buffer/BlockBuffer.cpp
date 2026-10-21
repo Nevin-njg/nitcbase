@@ -411,3 +411,33 @@ int RecBuffer::setSlotMap(unsigned char *slotMap)
 
     return SUCCESS;
 }
+
+void BlockBuffer::releaseBlock() {
+
+    // STEP 1: Check whether block number is valid
+    if (blockNum < 0 || blockNum >= DISK_BLOCKS) {
+        return;
+    }
+
+    // STEP 2: Check whether block is present in buffer
+    int bufferNum = StaticBuffer::getBufferNum(blockNum);
+
+    // STEP 3: Release the buffer if present
+    if (bufferNum >= 0) {
+
+        StaticBuffer::metainfo[bufferNum].free = true;
+
+        StaticBuffer::metainfo[bufferNum].dirty = false;
+
+        StaticBuffer::metainfo[bufferNum].blockNum =
+            INVALID_BLOCKNUM;
+
+        StaticBuffer::metainfo[bufferNum].timeStamp = -1;
+    }
+
+    // STEP 4: Mark block as unused
+    StaticBuffer::blockAllocMap[blockNum] = UNUSED_BLK;
+
+    // STEP 5: Invalidate this BlockBuffer object
+    blockNum = INVALID_BLOCKNUM;
+}

@@ -523,6 +523,8 @@ int OpenRelTable::openRel(char relName[ATTR_SIZE]) {
 }
 
 
+
+
 int OpenRelTable::closeRel(int relId) {
 
   // RELATIONCAT and ATTRIBUTECAT cannot be closed normally
@@ -610,38 +612,71 @@ int OpenRelTable::closeRel(int relId) {
   return SUCCESS;
 }
 
-OpenRelTable::~OpenRelTable()
-{
-    // Flush relation-cache updates for user relations that were still open
-    // when the database session ends.  RELATIONCAT and ATTRIBUTECAT remain
-    // open for the lifetime of the session and are released below.
-    for (int relId = 2; relId < MAX_OPEN; relId++)
-    {
-        if (!tableMetaInfo[relId].free)
-        {
-            closeRel(relId);
+
+
+OpenRelTable::~OpenRelTable() {
+
+    // STEP 1: Close all user relations
+    for (int relId = 2; relId < MAX_OPEN; relId++) {
+
+        if (!tableMetaInfo[relId].free) {
+            OpenRelTable::closeRel(relId);
         }
     }
 
-    for (int relId = 0; relId < MAX_OPEN; relId++)
-    {
-        // Free the linked list of attribute-cache entries.
-        AttrCacheEntry *entry = AttrCacheTable::attrCache[relId];
 
-        while (entry != nullptr)
-        {
-            AttrCacheEntry *nextEntry = entry->next;
-            free(entry);
-            entry = nextEntry;
+    // STEP 2: Write back catalog relation cache entries
+    for (int relId = ATTRCAT_RELID;
+         relId >= RELCAT_RELID;
+         relId--) {
+
+        RelCacheEntry *entry = RelCacheTable::relCache[relId];
+
+        if (entry == nullptr)
+            continue;
+
+        if (entry->dirty) {
+
+            Attribute record[RELCAT_NO_ATTRS];
+
+            RelCacheTable::relCatEntryToRecord(
+                &entry->relCatEntry,
+                record
+            );
+
+            RecId recId = entry->recId;
+
+            RecBuffer relCatBlock(recId.block);
+
+            relCatBlock.setRecord(record, recId.slot);
+        }
+
+        std::free(entry);
+
+        RelCacheTable::relCache[relId] = nullptr;
+    }
+
+
+    // STEP 3: Free attribute cache entries of catalogs
+    for (int relId = RELCAT_RELID;
+         relId <= ATTRCAT_RELID;
+         relId++) {
+
+        AttrCacheEntry *entry =
+            AttrCacheTable::attrCache[relId];
+
+        while (entry != nullptr) {
+
+            AttrCacheEntry *next = entry->next;
+
+            std::free(entry);
+
+            entry = next;
         }
 
         AttrCacheTable::attrCache[relId] = nullptr;
 
-        // Free the relation-cache entry.
-        if (RelCacheTable::relCache[relId] != nullptr)
-        {
-            free(RelCacheTable::relCache[relId]);
-            RelCacheTable::relCache[relId] = nullptr;
-        }
+        tableMetaInfo[relId].free = true;
+        tableMetaInfo[relId].relName[0] = '\0';
     }
 }
