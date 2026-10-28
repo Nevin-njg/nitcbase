@@ -2,6 +2,7 @@
 #include <vector>
 #include <cstring>
 
+long long stage10LinearComparisons = 0;
 
 RecId BlockAccess::linearSearch(
     int relId,
@@ -74,6 +75,8 @@ RecId BlockAccess::linearSearch(
         // 7. Read the actual record
         Attribute record[head.numAttrs];
         blockBuffer.getRecord(record, slot);
+
+        stage10LinearComparisons++;
 
         // 8. Compare condition attribute with query value
         int cmpVal = compareAttrs(
@@ -650,27 +653,44 @@ int BlockAccess::insert(int relId, union Attribute *record)
     return SUCCESS;
 }
 
-
 int BlockAccess::search(
     int relId,
     Attribute *record,
-    char attrName[ATTR_SIZE],
+    char *attrName,
     Attribute attrVal,
     int op
 ) {
+    AttrCatEntry attrCatEntry;
 
-    RecId recId = BlockAccess::linearSearch(
-        relId, attrName, attrVal, op
+    int ret = AttrCacheTable::getAttrCatEntry(
+        relId, attrName, &attrCatEntry
     );
 
-    if (recId.block == -1)
+    if (ret != SUCCESS)
+        return ret;
+
+    RecId recId;
+
+    if (attrCatEntry.rootBlock == -1) {
+
+        recId = BlockAccess::linearSearch(
+            relId, attrName, attrVal, op
+        );
+
+    } else {
+
+        recId = BPlusTree::bPlusSearch(
+            relId, attrName, attrVal, op
+        );
+    }
+
+    if (recId.block == -1 && recId.slot == -1)
         return E_NOTFOUND;
 
-    RecBuffer block(recId.block);
+    RecBuffer recBlock(recId.block);
 
-    return block.getRecord(record, recId.slot);
+    return recBlock.getRecord(record, recId.slot);
 }
-
 
 int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
 
@@ -1008,3 +1028,5 @@ int BlockAccess::project(int relId, Attribute *record) {
     // No more records
     return E_NOTFOUND;
 }
+
+

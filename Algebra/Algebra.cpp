@@ -4,6 +4,11 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <iostream>
+#include <chrono>
+
+extern long long stage10LinearComparisons;
+extern long long stage10BPlusComparisons;
 
 // Returns true if the given string represents a number
 static bool isNumber(char *str)
@@ -23,6 +28,8 @@ int Algebra::select(
     int op,
     char strVal[ATTR_SIZE])
 {
+    auto startTime = std::chrono::steady_clock::now();
+
     // 1. Find source relation
     int srcRelId = OpenRelTable::getRelId(srcRel);
 
@@ -121,9 +128,12 @@ int Algebra::select(
         return targetRelId;
     }
 
+    //8 Reset linear search position
+    RelCacheTable::resetSearchIndex(srcRelId);
 
-    // 8. Reset source search index
-    ret = RelCacheTable::resetSearchIndex(srcRelId);
+    // Reset B+ Tree search position
+    AttrCacheTable::resetSearchIndex(srcRelId, attr);
+
 
     if (ret != SUCCESS)
     {
@@ -136,6 +146,9 @@ int Algebra::select(
 
     // 9. Retrieve and insert matching records
     Attribute record[nAttrs];
+
+    stage10LinearComparisons = 0;
+    stage10BPlusComparisons = 0;
 
     while (true)
     {
@@ -175,7 +188,18 @@ int Algebra::select(
         }
     }
 
+    std::cout << "Linear Search Comparisons: "
+          << stage10LinearComparisons << std::endl;
 
+    std::cout << "B+ Tree Search Comparisons: "
+            << stage10BPlusComparisons << std::endl;
+
+    auto endTime = std::chrono::steady_clock::now();
+
+    std::cout << "Execution Time: "
+            << std::chrono::duration<double>(endTime - startTime).count()
+            << " seconds\n";
+            
     // 10. Close target relation
     return Schema::closeRel(targetRel);
 }

@@ -441,3 +441,85 @@ void BlockBuffer::releaseBlock() {
     // STEP 5: Invalidate this BlockBuffer object
     blockNum = INVALID_BLOCKNUM;
 }
+
+
+// Allocate a new index block
+IndBuffer::IndBuffer(char blockType)
+    : BlockBuffer(blockType) {
+}
+
+// Access an existing index block
+IndBuffer::IndBuffer(int blockNum)
+    : BlockBuffer(blockNum) {
+}
+
+IndInternal::IndInternal() : IndBuffer('I') {}
+
+IndInternal::IndInternal(int blockNum) : IndBuffer(blockNum) {}
+
+IndLeaf::IndLeaf() : IndBuffer('L') {}
+
+IndLeaf::IndLeaf(int blockNum) : IndBuffer(blockNum) {}
+
+
+
+int IndInternal::getEntry(void *ptr, int indexNum) {
+
+    if (indexNum < 0 || indexNum >= MAX_KEYS_INTERNAL)
+        return E_OUTOFBOUND;
+
+    unsigned char *bufferPtr;
+
+    int ret = loadBlockAndGetBufferPtr(&bufferPtr);
+
+    if (ret != SUCCESS)
+        return ret;
+
+    unsigned char *entryPtr =
+        bufferPtr + HEADER_SIZE +
+        indexNum * (sizeof(int32_t) + ATTR_SIZE);
+
+    InternalEntry *entry = (InternalEntry *)ptr;
+
+    memcpy(&entry->lChild, entryPtr, sizeof(int32_t));
+
+    memcpy(&entry->attrVal,
+           entryPtr + sizeof(int32_t), ATTR_SIZE);
+
+    memcpy(&entry->rChild,
+           entryPtr + sizeof(int32_t) + ATTR_SIZE,
+           sizeof(int32_t));
+
+    return SUCCESS;
+}
+
+
+int IndLeaf::getEntry(void *ptr, int indexNum) {
+
+    if (indexNum < 0 || indexNum >= MAX_KEYS_LEAF)
+        return E_OUTOFBOUND;
+
+    unsigned char *bufferPtr;
+
+    int ret = loadBlockAndGetBufferPtr(&bufferPtr);
+
+    if (ret != SUCCESS)
+        return ret;
+
+    unsigned char *entryPtr =
+        bufferPtr + HEADER_SIZE +
+        indexNum * LEAF_ENTRY_SIZE;
+
+    memcpy(ptr, entryPtr, LEAF_ENTRY_SIZE);
+
+    return SUCCESS;
+}
+
+
+int IndInternal::setEntry(void *ptr, int indexNum) {
+    return SUCCESS;
+}
+
+int IndLeaf::setEntry(void *ptr, int indexNum) {
+    return SUCCESS;
+}

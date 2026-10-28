@@ -88,3 +88,153 @@ void AttrCacheTable::recordToAttrCatEntry(
     attrCatEntry->offset =
         (int)record[ATTRCAT_OFFSET_INDEX].nVal;
 }
+
+
+int AttrCacheTable::getSearchIndex(
+    int relId,
+    char attrName[ATTR_SIZE],
+    IndexId *searchIndex
+) {
+    // Step 1: Validate relation ID
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
+
+    // Step 2: Check whether relation is open
+    if (attrCache[relId] == nullptr)
+        return E_RELNOTOPEN;
+
+    // Step 3: Start from first attribute
+    AttrCacheEntry *entry = attrCache[relId];
+
+    // Step 4: Search for the attribute
+    while (entry != nullptr) {
+
+        if (strcmp(entry->attrCatEntry.attrName,
+                   attrName) == 0) {
+
+            // Step 5: Copy the search position
+            *searchIndex = entry->searchIndex;
+
+            return SUCCESS;
+        }
+
+        entry = entry->next;
+    }
+
+    return E_ATTRNOTEXIST;
+}
+
+int AttrCacheTable::getSearchIndex(
+    int relId,
+    int attrOffset,
+    IndexId *searchIndex
+) {
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
+
+    if (attrCache[relId] == nullptr)
+        return E_RELNOTOPEN;
+
+    AttrCacheEntry *entry = attrCache[relId];
+
+    while (entry != nullptr) {
+
+        if (entry->attrCatEntry.offset == attrOffset) {
+
+            *searchIndex = entry->searchIndex;
+
+            return SUCCESS;
+        }
+
+        entry = entry->next;
+    }
+
+    return E_ATTRNOTEXIST;
+}
+
+
+int AttrCacheTable::setSearchIndex(
+    int relId,
+    char attrName[ATTR_SIZE],
+    IndexId *searchIndex
+) {
+    // Check valid relation ID
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
+
+    // Check relation is open
+    if (attrCache[relId] == nullptr)
+        return E_RELNOTOPEN;
+
+    // Start from first attribute
+    AttrCacheEntry *entry = attrCache[relId];
+
+    // Search for matching attribute
+    while (entry != nullptr) {
+
+        if (strcmp(entry->attrCatEntry.attrName,
+                   attrName) == 0) {
+
+            entry->searchIndex = *searchIndex;
+
+            return SUCCESS;
+        }
+
+        entry = entry->next;
+    }
+
+    return E_ATTRNOTEXIST;
+}
+
+
+int AttrCacheTable::setSearchIndex(
+    int relId,
+    int attrOffset,
+    IndexId *searchIndex
+) {
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
+
+    if (attrCache[relId] == nullptr)
+        return E_RELNOTOPEN;
+
+    AttrCacheEntry *entry = attrCache[relId];
+
+    while (entry != nullptr) {
+
+        if (entry->attrCatEntry.offset == attrOffset) {
+
+            entry->searchIndex = *searchIndex;
+
+            return SUCCESS;
+        }
+
+        entry = entry->next;
+    }
+
+    return E_ATTRNOTEXIST;
+}
+
+
+int AttrCacheTable::resetSearchIndex(
+    int relId,
+    char attrName[ATTR_SIZE]
+) {
+    IndexId searchIndex = {-1, -1};
+
+    return AttrCacheTable::setSearchIndex(
+        relId, attrName, &searchIndex
+    );
+}
+
+
+int AttrCacheTable::resetSearchIndex(
+    int relId,
+    int attrOffset
+) {
+    IndexId searchIndex = {-1, -1};
+
+    return AttrCacheTable::setSearchIndex(
+        relId, attrOffset, &searchIndex
+    );
+}
