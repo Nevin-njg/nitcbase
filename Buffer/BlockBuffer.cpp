@@ -516,10 +516,76 @@ int IndLeaf::getEntry(void *ptr, int indexNum) {
 }
 
 
-int IndInternal::setEntry(void *ptr, int indexNum) {
-    return SUCCESS;
+int IndLeaf::setEntry(void *ptr, int indexNum) {
+
+    // Validate the entry index
+    if (indexNum < 0 || indexNum >= MAX_KEYS_LEAF)
+        return E_OUTOFBOUND;
+
+    unsigned char *bufferPtr;
+
+    // Load the leaf block into the buffer
+    int ret = loadBlockAndGetBufferPtr(&bufferPtr);
+
+    if (ret != SUCCESS)
+        return ret;
+
+    // Calculate the location of the index entry
+    unsigned char *entryPtr =
+        bufferPtr + HEADER_SIZE +
+        indexNum * LEAF_ENTRY_SIZE;
+
+    // Copy the index entry into the leaf block
+    memcpy(entryPtr, ptr, LEAF_ENTRY_SIZE);
+
+    // Mark the block as modified
+    return StaticBuffer::setDirtyBit(blockNum);
 }
 
-int IndLeaf::setEntry(void *ptr, int indexNum) {
-    return SUCCESS;
+
+int IndInternal::setEntry(void *ptr, int indexNum) {
+
+    // Check whether index is valid
+    if (indexNum < 0 || indexNum >= MAX_KEYS_INTERNAL)
+        return E_OUTOFBOUND;
+
+    unsigned char *bufferPtr;
+
+    // Load index block into buffer
+    int ret = loadBlockAndGetBufferPtr(&bufferPtr);
+
+    if (ret != SUCCESS)
+        return ret;
+
+    // Get internal entry
+    InternalEntry *entry = (InternalEntry *)ptr;
+
+    // Calculate position inside block
+    unsigned char *entryPtr =
+        bufferPtr + HEADER_SIZE +
+        indexNum * (sizeof(int32_t) + ATTR_SIZE);
+
+    // Write left child pointer
+    memcpy(
+        entryPtr,
+        &entry->lChild,
+        sizeof(int32_t)
+    );
+
+    // Write key
+    memcpy(
+        entryPtr + sizeof(int32_t),
+        &entry->attrVal,
+        ATTR_SIZE
+    );
+
+    // Write right child pointer
+    memcpy(
+        entryPtr + sizeof(int32_t) + ATTR_SIZE,
+        &entry->rChild,
+        sizeof(int32_t)
+    );
+
+    // Mark block as modified
+    return StaticBuffer::setDirtyBit(blockNum);
 }

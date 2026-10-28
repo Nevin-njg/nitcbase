@@ -48,15 +48,6 @@ int Frontend::alter_table_rename_column(
     );
 }
 
-int Frontend::create_index(char relname[ATTR_SIZE], char attrname[ATTR_SIZE]) {
-  // Schema::createIndex
-  return SUCCESS;
-}
-
-int Frontend::drop_index(char relname[ATTR_SIZE], char attrname[ATTR_SIZE]) {
-  // Schema::dropIndex
-  return SUCCESS;
-}
 
 int Frontend::insert_into_table_values(char relname[ATTR_SIZE], int attr_count, char attr_values[][ATTR_SIZE]) {
   return Algebra::insert(relname, attr_count, attr_values);
@@ -176,4 +167,21 @@ int Frontend::custom_function(int argc, char argv[][ATTR_SIZE]) {
   // implement whatever you desire
 
   return SUCCESS;
+}
+
+int Frontend::create_index(
+    char relname[ATTR_SIZE],
+    char attrname[ATTR_SIZE]
+) {
+    // Forward CREATE INDEX request to Schema Layer
+    return Schema::createIndex(relname, attrname);
+}
+
+
+int Frontend::drop_index(
+    char relname[ATTR_SIZE],
+    char attrname[ATTR_SIZE]
+) {
+    // Forward DROP INDEX request to Schema Layer
+    return Schema::dropIndex(relname, attrname);
 }

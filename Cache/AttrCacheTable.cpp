@@ -238,3 +238,113 @@ int AttrCacheTable::resetSearchIndex(
         relId, attrOffset, &searchIndex
     );
 }
+
+
+int AttrCacheTable::setAttrCatEntry(
+    int relId,
+    char attrName[ATTR_SIZE],
+    AttrCatEntry *attrCatBuf
+) {
+    // Check whether relation ID is valid
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
+
+    // Check whether relation is open
+    if (attrCache[relId] == nullptr)
+        return E_RELNOTOPEN;
+
+    // Get first attribute in the cache
+    AttrCacheEntry *entry = attrCache[relId];
+
+    // Search for the attribute by name
+    while (entry != nullptr) {
+
+        if (strcmp(entry->attrCatEntry.attrName, attrName) == 0) {
+
+            // Update attribute information
+            entry->attrCatEntry = *attrCatBuf;
+
+            // Mark entry as modified
+            entry->dirty = true;
+
+            return SUCCESS;
+        }
+
+        // Move to next attribute
+        entry = entry->next;
+    }
+
+    return E_ATTRNOTEXIST;
+}
+
+
+int AttrCacheTable::setAttrCatEntry(
+    int relId,
+    int attrOffset,
+    AttrCatEntry *attrCatBuf
+) {
+    // Validate relation ID
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
+
+    // Check whether relation is open
+    if (attrCache[relId] == nullptr)
+        return E_RELNOTOPEN;
+
+    // Start from first attribute
+    AttrCacheEntry *entry = attrCache[relId];
+
+    while (entry != nullptr) {
+
+        // Find attribute using its offset
+        if (entry->attrCatEntry.offset == attrOffset) {
+
+            // Update cached information
+            entry->attrCatEntry = *attrCatBuf;
+
+            // Mark modified
+            entry->dirty = true;
+
+            return SUCCESS;
+        }
+
+        entry = entry->next;
+    }
+
+    return E_ATTRNOTEXIST;
+}
+
+void AttrCacheTable::attrCatEntryToRecord(
+    AttrCatEntry *attrCatEntry,
+    union Attribute record[ATTRCAT_NO_ATTRS]
+) {
+    // Copy relation name
+    memcpy(
+        record[ATTRCAT_REL_NAME_INDEX].sVal,
+        attrCatEntry->relName,
+        ATTR_SIZE
+    );
+
+    // Copy attribute name
+    memcpy(
+        record[ATTRCAT_ATTR_NAME_INDEX].sVal,
+        attrCatEntry->attrName,
+        ATTR_SIZE
+    );
+
+    // Store attribute type
+    record[ATTRCAT_ATTR_TYPE_INDEX].nVal =
+        attrCatEntry->attrType;
+
+    // Store primary key flag
+    record[ATTRCAT_PRIMARY_FLAG_INDEX].nVal =
+        attrCatEntry->primaryFlag ? 1 : 0;
+
+    // Store B+ Tree root block
+    record[ATTRCAT_ROOT_BLOCK_INDEX].nVal =
+        attrCatEntry->rootBlock;
+
+    // Store attribute offset
+    record[ATTRCAT_OFFSET_INDEX].nVal =
+        attrCatEntry->offset;
+}

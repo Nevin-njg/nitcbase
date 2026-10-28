@@ -524,94 +524,123 @@ int OpenRelTable::openRel(char relName[ATTR_SIZE]) {
 
 
 
-
 int OpenRelTable::closeRel(int relId) {
 
-  // RELATIONCAT and ATTRIBUTECAT cannot be closed normally
-  if (relId == RELCAT_RELID || relId == ATTRCAT_RELID) {
-    return E_NOTPERMITTED;
-  }
+    // System catalogs cannot be closed normally
+    if (relId == RELCAT_RELID || relId == ATTRCAT_RELID)
+        return E_NOTPERMITTED;
 
-  // Check whether relId is valid
-  if (relId < 0 || relId >= MAX_OPEN) {
-    return E_OUTOFBOUND;
-  }
+    // Check valid relation ID
+    if (relId < 0 || relId >= MAX_OPEN)
+        return E_OUTOFBOUND;
 
-  // Nothing is open in this slot
-  if (tableMetaInfo[relId].free) {
-    return E_RELNOTOPEN;
-  }
+    // Check whether relation is open
+    if (tableMetaInfo[relId].free)
+        return E_RELNOTOPEN;
 
 
-  // --------------------------------------------------
-  // 1. Write back Relation Cache entry if it is dirty
-  // --------------------------------------------------
-  if (RelCacheTable::relCache[relId] != nullptr &&
-      RelCacheTable::relCache[relId]->dirty) {
+    // -----------------------------------------
+    // 1. Write back Relation Cache if dirty
+    // -----------------------------------------
 
-    // Convert RelCatEntry -> Attribute record[]
-    Attribute record[RELCAT_NO_ATTRS];
+    if (RelCacheTable::relCache[relId] != nullptr &&
+        RelCacheTable::relCache[relId]->dirty) {
 
-    RelCacheTable::relCatEntryToRecord(
-        &(RelCacheTable::relCache[relId]->relCatEntry),
-        record
-    );
+        Attribute record[RELCAT_NO_ATTRS];
 
-    // Location of this relation's entry in RELATIONCAT
-    RecId recId =
-        RelCacheTable::relCache[relId]->recId;
+        RelCacheTable::relCatEntryToRecord(
+            &RelCacheTable::relCache[relId]->relCatEntry,
+            record
+        );
 
-    // Open the corresponding RELATIONCAT block
-    RecBuffer relCatBlock(recId.block);
+        RecId recId = RelCacheTable::relCache[relId]->recId;
 
-    // Write updated relation metadata back to the block
-    int status =
-        relCatBlock.setRecord(record, recId.slot);
+        RecBuffer relCatBlock(recId.block);
 
-    if (status != SUCCESS) {
-      return status;
+        int ret = relCatBlock.setRecord(record, recId.slot);
+
+        if (ret != SUCCESS)
+            return ret;
     }
-  }
 
 
-  // --------------------------------------------------
-  // 2. Free Relation Cache entry
-  // --------------------------------------------------
-  free(RelCacheTable::relCache[relId]);
+    // -----------------------------------------
+    // 2. Write back Attribute Cache if dirty
+    // NEW IN STAGE 11
+    // -----------------------------------------
 
-  RelCacheTable::relCache[relId] = nullptr;
+    AttrCacheEntry *entry = AttrCacheTable::attrCache[relId];
+
+    while (entry != nullptr) {
+
+        if (entry->dirty) {
+
+            // Convert attribute metadata to record
+            Attribute record[ATTRCAT_NO_ATTRS];
+
+            AttrCacheTable::attrCatEntryToRecord(
+                &entry->attrCatEntry,
+                record
+            );
+
+            // Find original Attribute Catalog record
+            RecId recId = entry->recId;
+
+            RecBuffer attrCatBlock(recId.block);
+
+            // Write updated metadata
+            int ret = attrCatBlock.setRecord(
+                record, recId.slot
+            );
+
+            if (ret != SUCCESS)
+                return ret;
+
+            entry->dirty = false;
+        }
+
+        entry = entry->next;
+    }
 
 
-  // --------------------------------------------------
-  // 3. Free Attribute Cache linked list
-  // --------------------------------------------------
-  AttrCacheEntry *current =
-      AttrCacheTable::attrCache[relId];
+    // -----------------------------------------
+    // 3. Free Relation Cache
+    // -----------------------------------------
 
-  while (current != nullptr) {
+    free(RelCacheTable::relCache[relId]);
 
-    // Save next before freeing current
-    AttrCacheEntry *next = current->next;
-
-    free(current);
-
-    current = next;
-  }
-
-  AttrCacheTable::attrCache[relId] = nullptr;
+    RelCacheTable::relCache[relId] = nullptr;
 
 
-  // --------------------------------------------------
-  // 4. Mark OpenRelTable slot as free
-  // --------------------------------------------------
-  tableMetaInfo[relId].free = true;
+    // -----------------------------------------
+    // 4. Free Attribute Cache linked list
+    // -----------------------------------------
 
-  strcpy(tableMetaInfo[relId].relName, "");
+    AttrCacheEntry *current =
+        AttrCacheTable::attrCache[relId];
+
+    while (current != nullptr) {
+
+        AttrCacheEntry *next = current->next;
+
+        free(current);
+
+        current = next;
+    }
+
+    AttrCacheTable::attrCache[relId] = nullptr;
 
 
-  return SUCCESS;
+    // -----------------------------------------
+    // 5. Mark relation slot free
+    // -----------------------------------------
+
+    tableMetaInfo[relId].free = true;
+
+    strcpy(tableMetaInfo[relId].relName, "");
+
+    return SUCCESS;
 }
-
 
 
 OpenRelTable::~OpenRelTable() {

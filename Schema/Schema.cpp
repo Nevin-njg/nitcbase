@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstring>
+#include "../BPlusTree/BPlusTree.h"
 
 
 int Schema::openRel(char relName[ATTR_SIZE]) {
@@ -212,4 +213,79 @@ int Schema::createRel(
     }
 
     return SUCCESS;
+}
+
+
+int Schema::createIndex(
+    char relName[ATTR_SIZE],
+    char attrName[ATTR_SIZE]
+) {
+    // Indexing system catalogs is not allowed
+    if (strcmp(relName, RELCAT_RELNAME) == 0 ||
+        strcmp(relName, ATTRCAT_RELNAME) == 0) {
+        return E_NOTPERMITTED;
+    }
+
+    // Get relation ID
+    int relId = OpenRelTable::getRelId(relName);
+
+    // Relation must be open
+    if (relId < 0) {
+        return E_RELNOTOPEN;
+    }
+
+    // Create B+ Tree index
+    return BPlusTree::bPlusCreate(relId, attrName);
+}
+
+
+int Schema::dropIndex(
+    char relName[ATTR_SIZE],
+    char attrName[ATTR_SIZE]
+) {
+    // Cannot modify system catalogs
+    if (strcmp(relName, RELCAT_RELNAME) == 0 ||
+        strcmp(relName, ATTRCAT_RELNAME) == 0) {
+        return E_NOTPERMITTED;
+    }
+
+    // Get relation ID
+    int relId = OpenRelTable::getRelId(relName);
+
+    if (relId < 0) {
+        return E_RELNOTOPEN;
+    }
+
+    // Get attribute information
+    AttrCatEntry attrCatEntry;
+
+    int ret = AttrCacheTable::getAttrCatEntry(
+        relId, attrName, &attrCatEntry
+    );
+
+    if (ret != SUCCESS) {
+        return ret;
+    }
+
+    // Check whether index exists
+    if (attrCatEntry.rootBlock == -1) {
+        return E_NOINDEX;
+    }
+
+    // Delete the B+ Tree
+    ret = BPlusTree::bPlusDestroy(
+        attrCatEntry.rootBlock
+    );
+
+    if (ret != SUCCESS) {
+        return ret;
+    }
+
+    // Mark the attribute as having no index
+    attrCatEntry.rootBlock = -1;
+
+    // Update attribute cache
+    return AttrCacheTable::setAttrCatEntry(
+        relId, attrName, &attrCatEntry
+    );
 }

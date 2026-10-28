@@ -648,9 +648,60 @@ int BlockAccess::insert(int relId, union Attribute *record)
     {
         return ret;
     }
+    // -----------------------------------------
+    // STAGE 11: Insert into existing B+ Trees
+    // -----------------------------------------
 
+    int flag = SUCCESS;
 
-    return SUCCESS;
+    // Get relation information
+    RelCatEntry relEntry;
+
+    ret = RelCacheTable::getRelCatEntry(
+        relId, &relEntry
+    );
+
+    if (ret != SUCCESS)
+        return ret;
+
+    // Check every attribute
+    for (int attrOffset = 0;
+        attrOffset < relEntry.numAttrs;
+        attrOffset++) {
+
+        AttrCatEntry attrEntry;
+
+        // Get attribute metadata
+        ret = AttrCacheTable::getAttrCatEntry(
+            relId, attrOffset, &attrEntry
+        );
+
+        if (ret != SUCCESS)
+            return ret;
+
+        // Skip attributes without indexes
+        if (attrEntry.rootBlock == -1)
+            continue;
+
+        // Insert the record into the B+ Tree
+        ret = BPlusTree::bPlusInsert(
+            relId,
+            attrEntry.attrName,
+            record[attrOffset],
+            recId
+        );
+        // The record was inserted, but its index
+        // was removed because the disk became full
+        if (ret == E_DISKFULL) {
+            flag = E_INDEX_BLOCKS_RELEASED;
+        }
+        else if (ret != SUCCESS) {
+            return ret;
+        }
+    }
+
+    return flag;
+
 }
 
 int BlockAccess::search(
@@ -692,6 +743,8 @@ int BlockAccess::search(
     return recBlock.getRecord(record, recId.slot);
 }
 
+
+
 int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
 
     // STEP 1: Protect system catalogs
@@ -700,7 +753,7 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
         return E_NOTPERMITTED;
     }
 
-    // STEP 2: Find the relation in RELATIONCAT
+    // STEP 2: Find relation in RELATIONCAT
     Attribute relNameAttr{};
     strcpy(relNameAttr.sVal, relName);
 
@@ -709,26 +762,34 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
     RelCacheTable::resetSearchIndex(RELCAT_RELID);
 
     RecId relRecId = BlockAccess::linearSearch(
-        RELCAT_RELID, relNameField, relNameAttr, EQ
+        RELCAT_RELID,
+        relNameField,
+        relNameAttr,
+        EQ
     );
 
     if (relRecId.block == -1) {
         return E_RELNOTEXIST;
     }
 
-    // STEP 3: Read the relation catalog record
+    // STEP 3: Read relation catalog record
     RecBuffer relCatBlock(relRecId.block);
 
     Attribute relRecord[RELCAT_NO_ATTRS];
 
     int ret = relCatBlock.getRecord(
-        relRecord, relRecId.slot
+        relRecord,
+        relRecId.slot
     );
 
     if (ret != SUCCESS)
         return ret;
 
-    // STEP 4: Release all data blocks
+
+    // --------------------------------------------------
+    // STEP 4: Release all relation data blocks
+    // --------------------------------------------------
+
     int blockNum =
         (int)relRecord[RELCAT_FIRST_BLOCK_INDEX].nVal;
 
@@ -745,20 +806,25 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
 
         int nextBlock = header.rblock;
 
+        // Release current data block
         dataBlock.releaseBlock();
 
+        // Move to next block
         blockNum = nextBlock;
     }
 
+
+    // --------------------------------------------------
     // STEP 5: Delete ATTRIBUTECAT records
+    // --------------------------------------------------
+
     char attrRelNameField[] = ATTRCAT_ATTR_RELNAME;
 
     int numberOfAttributesDeleted = 0;
 
     while (true) {
 
-        // Reset because we are deleting records
-        // and may release catalog blocks.
+        // Reset search index before each search
         RelCacheTable::resetSearchIndex(ATTRCAT_RELID);
 
         RecId attrRecId = BlockAccess::linearSearch(
@@ -768,9 +834,11 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
             EQ
         );
 
+        // No more attributes belonging to this relation
         if (attrRecId.block == -1)
             break;
 
+        // Open Attribute Catalog block
         RecBuffer attrBlock(attrRecId.block);
 
         HeadInfo header;
@@ -780,7 +848,44 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
         if (ret != SUCCESS)
             return ret;
 
-        // Mark the attribute record's slot as free
+
+        // ==============================================
+        // STAGE 11: DESTROY B+ TREE INDEX
+        // ==============================================
+
+        // Read attribute catalog record
+        Attribute attrRecord[ATTRCAT_NO_ATTRS];
+
+        ret = attrBlock.getRecord(
+            attrRecord,
+            attrRecId.slot
+        );
+
+        if (ret != SUCCESS)
+            return ret;
+
+        // Obtain B+ Tree root block
+        int rootBlock =
+            (int)attrRecord[ATTRCAT_ROOT_BLOCK_INDEX].nVal;
+
+        // Delete index if one exists
+        if (rootBlock != -1) {
+
+            ret = BPlusTree::bPlusDestroy(rootBlock);
+
+            if (ret != SUCCESS)
+                return ret;
+        }
+
+        // ==============================================
+        // END OF STAGE 11 ADDITION
+        // ==============================================
+
+
+        // --------------------------------------------------
+        // Mark attribute record as unoccupied
+        // --------------------------------------------------
+
         unsigned char slotMap[BLOCK_SIZE];
 
         ret = attrBlock.getSlotMap(slotMap);
@@ -795,7 +900,7 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
         if (ret != SUCCESS)
             return ret;
 
-        // Decrease number of occupied slots
+        // Decrease occupied entries
         header.numEntries--;
 
         ret = attrBlock.setHeader(&header);
@@ -803,7 +908,11 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
         if (ret != SUCCESS)
             return ret;
 
+
+        // --------------------------------------------------
         // STEP 6: Release empty ATTRIBUTECAT blocks
+        // --------------------------------------------------
+
         if (header.numEntries == 0) {
 
             // Update previous block
@@ -847,11 +956,12 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
 
             } else {
 
-                // The released block was the last block
+                // Released block was the final block
                 RelCatEntry attrMeta;
 
                 ret = RelCacheTable::getRelCatEntry(
-                    ATTRCAT_RELID, &attrMeta
+                    ATTRCAT_RELID,
+                    &attrMeta
                 );
 
                 if (ret != SUCCESS)
@@ -860,20 +970,26 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
                 attrMeta.lastBlk = header.lblock;
 
                 ret = RelCacheTable::setRelCatEntry(
-                    ATTRCAT_RELID, &attrMeta
+                    ATTRCAT_RELID,
+                    &attrMeta
                 );
 
                 if (ret != SUCCESS)
                     return ret;
             }
 
+            // Release empty Attribute Catalog block
             attrBlock.releaseBlock();
         }
 
         numberOfAttributesDeleted++;
     }
 
+
+    // --------------------------------------------------
     // STEP 7: Delete RELATIONCAT entry
+    // --------------------------------------------------
+
     HeadInfo relHeader;
 
     ret = relCatBlock.getHeader(&relHeader);
@@ -888,6 +1004,7 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
     if (ret != SUCCESS)
         return ret;
 
+    // Mark relation catalog record as free
     relSlotMap[relRecId.slot] = SLOT_UNOCCUPIED;
 
     ret = relCatBlock.setSlotMap(relSlotMap);
@@ -895,6 +1012,7 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
     if (ret != SUCCESS)
         return ret;
 
+    // Update number of records in this block
     relHeader.numEntries--;
 
     ret = relCatBlock.setHeader(&relHeader);
@@ -902,11 +1020,16 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
     if (ret != SUCCESS)
         return ret;
 
+
+    // --------------------------------------------------
     // STEP 8: Update RELATIONCAT cache
+    // --------------------------------------------------
+
     RelCatEntry relMeta;
 
     ret = RelCacheTable::getRelCatEntry(
-        RELCAT_RELID, &relMeta
+        RELCAT_RELID,
+        &relMeta
     );
 
     if (ret != SUCCESS)
@@ -915,17 +1038,23 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
     relMeta.numRecs--;
 
     ret = RelCacheTable::setRelCatEntry(
-        RELCAT_RELID, &relMeta
+        RELCAT_RELID,
+        &relMeta
     );
 
     if (ret != SUCCESS)
         return ret;
 
+
+    // --------------------------------------------------
     // STEP 9: Update ATTRIBUTECAT cache
+    // --------------------------------------------------
+
     RelCatEntry attrMeta;
 
     ret = RelCacheTable::getRelCatEntry(
-        ATTRCAT_RELID, &attrMeta
+        ATTRCAT_RELID,
+        &attrMeta
     );
 
     if (ret != SUCCESS)
@@ -934,7 +1063,8 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
     attrMeta.numRecs -= numberOfAttributesDeleted;
 
     ret = RelCacheTable::setRelCatEntry(
-        ATTRCAT_RELID, &attrMeta
+        ATTRCAT_RELID,
+        &attrMeta
     );
 
     if (ret != SUCCESS)
@@ -942,6 +1072,7 @@ int BlockAccess::deleteRelation(char relName[ATTR_SIZE]) {
 
     return SUCCESS;
 }
+
 
 
 int BlockAccess::project(int relId, Attribute *record) {
